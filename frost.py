@@ -476,44 +476,55 @@ class Tests(unittest.TestCase):
         self.assertEqual(secret * G, pk1)
 
     def test_sign(self):
-        p1 = FROST.Participant(index=1, threshold=2, participants=3)
-        p2 = FROST.Participant(index=2, threshold=2, participants=3)
-        p3 = FROST.Participant(index=3, threshold=2, participants=3)
+        NUM_PARTICIPANTS = 3
+
+        participants = [FROST.Participant(index=index, threshold=NUM_PARTICIPANTS, participants=NUM_PARTICIPANTS) for index in range(1, NUM_PARTICIPANTS + 1)]
 
         # KeyGen
-        p1.init_keygen()
-        p2.init_keygen()
-        p3.init_keygen()
+        for participant in participants:
+            participant.init_keygen()
 
-        p1.generate_shares()
-        p2.generate_shares()
-        p3.generate_shares()
+        for participant in participants:
+            participant.generate_shares()
 
-        p1.aggregate_shares([p2.shares[p1.index-1], p3.shares[p1.index-1]])
-        p2.aggregate_shares([p1.shares[p2.index-1], p3.shares[p2.index-1]])
-        p3.aggregate_shares([p1.shares[p3.index-1], p2.shares[p3.index-1]])
+        for participant in participants:
+            shares = []
+            for other_participant in participants:
+                if participant == other_participant:
+                    continue
 
-        p1.derive_public_key([p2.coefficient_commitments[0], p3.coefficient_commitments[0]])
-        p2.derive_public_key([p1.coefficient_commitments[0], p3.coefficient_commitments[0]])
-        pk = p3.derive_public_key([p1.coefficient_commitments[0], p2.coefficient_commitments[0]])
+                shares.append(other_participant.shares[participant.index - 1])
+
+            participant.aggregate_shares(shares)
+
+        pk = None
+        for participant in participants:
+            coefficients = []
+            for other_participant in participants:
+                if participant == other_participant:
+                    continue
+
+                coefficients.append(other_participant.coefficient_commitments[0])
+
+            pk = participant.derive_public_key(coefficients)
 
         # NonceGen
-        p1.generate_nonces(1)
-        p2.generate_nonces(1)
-        p3.generate_nonces(1)
+        for participant in participants:
+            participant.generate_nonces(1)
 
         # Sign
         msg = b'fnord!'
-        participant_indexes = [1, 2, 3]
-        agg = FROST.Aggregator(pk, msg, [p1.nonce_commitment_pairs, p2.nonce_commitment_pairs, p3.nonce_commitment_pairs], participant_indexes)
+        participant_indexes = list(range(1, NUM_PARTICIPANTS + 1))
+
+        agg = FROST.Aggregator(pk, msg, [participant.nonce_commitment_pairs for participant in participants], participant_indexes)
         message, nonce_commitment_pairs = agg.signing_inputs()
 
-        s1 = p1.sign(message, nonce_commitment_pairs, participant_indexes)
-        s2 = p2.sign(message, nonce_commitment_pairs, participant_indexes)
-        s3 = p3.sign(message, nonce_commitment_pairs, participant_indexes)
+        signatures = []
+        for participant in participants:
+            signatures.append(participant.sign(message, nonce_commitment_pairs, participant_indexes))
 
         # sigma = (R, z)
-        nonce_commitment, s = agg.signature([s1, s2, s3])
+        nonce_commitment, s = agg.signature(signatures)
 
         # verify
         G = FROST.secp256k1.G()
